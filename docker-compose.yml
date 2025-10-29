@@ -9,7 +9,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./init-postgres:/docker-entrypoint-initdb.d
+      - ./init-postgre:/docker-entrypoint-initdb.d
 
   mongo:
     image: mongo:7
