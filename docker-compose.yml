@@ -31,7 +31,7 @@ services:
       - PG_PASSWORD=admin
       - PG_HOST=postgres
       - PG_PORT=5432
-      - PG_DATABASE=sweetshop
+      - PG_DATABASE=sweetcake
       - MONGO_URI=mongodb://mongo:27017/sweetshop
     ports:
       - "3000:3000"
