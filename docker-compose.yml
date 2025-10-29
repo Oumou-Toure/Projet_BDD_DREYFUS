@@ -2,11 +2,11 @@ version: "3.9"
 services:
   postgres:
     image: postgres:15
-    container_name: 
+    container_name: postgres_container
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: admin
-      POSTGRES_DB: sweetshop
+      POSTGRES_DB: sweetcake
     ports:
       - "5432:5432"
     volumes:
@@ -14,8 +14,27 @@ services:
 
   mongo:
     image: mongo:7
-    container_name: 
+    container_name: mongo_container
     ports:
       - "27017:27017"
     volumes:
       - ./init-mongo:/docker-entrypoint-initdb.d
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: projet_bdd_api
+    environment:
+      - PORT=3000
+      - PG_USER=admin
+      - PG_PASSWORD=admin
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_DATABASE=sweetcake
+      - MONGO_URI=mongodb://mongo:27017/sweetcake
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+      - mongo
