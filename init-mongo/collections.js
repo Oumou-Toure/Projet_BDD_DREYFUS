@@ -1,17 +1,9 @@
-// javascript
-// init-mongo/collections.js
 db = db.getSiblingDB('sweetcake');
 
 function hasCollection(name) {
     return db.getCollectionNames().includes(name);
 }
 
-/* Collection `recette`:
-   - productId : identifiant du produit dans Postgres (string ou int)
-   - ingredients : array de string
-   - etapes : array de string
-   - createdBy, createdAt
-*/
 if (!hasCollection('recette')) {
     db.createCollection('recette', {
         validator: {
@@ -54,10 +46,6 @@ if (!hasCollection('recette')) {
     });
 }
 
-/* Collection `avis`:
-   - productId : référence au produit Postgres
-   - clientId, commentaire, dateDePublication, note optional
-*/
 if (!hasCollection('avis')) {
     db.createCollection('avis', {
         validator: {

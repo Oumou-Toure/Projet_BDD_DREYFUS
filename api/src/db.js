@@ -7,7 +7,7 @@ let pgPool;
 function initPostgres() {
     if (pgPool) return pgPool;
     pgPool = new Pool({
-        user: process.env.PG_USER,
+        user: '',
         host: process.env.PG_HOST,
         database: process.env.PG_DATABASE,
         password: process.env.PG_PASSWORD,
