@@ -1,7 +1,6 @@
 // api/src/index.js
 require('dotenv').config();
 const express = require('express');
-const { initPostgres, initMongo } = require('./db');
 const { MongoClient } = require('mongodb');
 const { Pool } = require('pg');
 
@@ -20,11 +19,11 @@ const DB_NAME = 'sweetcake';
 let mongoDb
 
 const pool = new Pool({
-    host: 'localhost',
-    user: 'admin',
-    password: 'admin',
-    database: 'sweetcake',
-    port: 5432,
+    host: process.env.PG_HOST || '127.0.0.1', // évite la résolution IPv6 (::1)
+    user: process.env.PG_USER || 'admin',
+    password: process.env.PG_PASSWORD || 'admin',
+    database: process.env.PG_DATABASE || 'sweetcake',
+    port: process.env.PG_PORT ? parseInt(process.env.PG_PORT, 10) : 5432,
 });
 
 async function start() {
@@ -211,26 +210,54 @@ async function start() {
         }
     });
 
-    /* --- PostgreSQL CRUD: commandes (transaction pour création) --- */
-    // GET commandes (avec lignes)
+    // GET commandes (sans lignes)
     app.get('/commandes', async (req, res) => {
         try {
-            const commandesRes = await pool.query('SELECT * FROM commandes ORDER BY id_commande');
-            const commandes = [];
-            for (const c of commandesRes.rows) {
-                const itemsRes = await pool.query(
-                    `SELECT pc.id_produit_commande, pc.id_produit, pc.quantite_produit, pc.prix_unitaire, p.nom
-           FROM produit_commande pc JOIN produits p ON p.id_produit = pc.id_produit WHERE pc.id_commande = $1`,
-                    [c.id_commande]
-                );
-                commandes.push({ ...c, items: itemsRes.rows });
-            }
-            return res.json(commandes);
+            const result = await pool.query('SELECT * FROM commandes ORDER BY id_commande');
+            return res.json(result.rows);
+        } catch (err) {
+            console.error(err);
+            return res.status(500).json({ error: 'Erreur serveur' });
+        }
+    })
+
+    /* --- PostgreSQL CRUD: commandes (transaction pour création) --- */
+    // GET commandes (avec lignes)
+    // javascript
+    app.get('/commandes-produits', async (req, res) => {
+        try {
+            const q = `
+      SELECT
+        c.id_commande,
+        c.date_commande,
+        c.total,
+        c.id_client,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'id_produit_commande', pc.id_produit_commande,
+              'id_produit', pc.id_produit,
+              'quantite_produit', pc.quantite_produit,
+              'nom', p.nom,
+              'prix', p.prix
+            )
+          ) FILTER (WHERE pc.id_produit_commande IS NOT NULL),
+          '[]'
+        ) AS items
+      FROM commandes c
+      LEFT JOIN produit_commande pc ON pc.id_commande = c.id_commande
+      LEFT JOIN produits p ON p.id_produit = pc.id_produit
+      GROUP BY c.id_commande, c.date_commande, c.total, c.id_client
+      ORDER BY c.id_commande;
+    `;
+            const result = await pool.query(q);
+            return res.json(result.rows);
         } catch (err) {
             console.error(err);
             return res.status(500).json({ error: 'Erreur serveur' });
         }
     });
+
 
     app.get('/commandes/:id', async (req, res) => {
         try {
@@ -253,58 +280,71 @@ async function start() {
     app.post('/commandes', async (req, res) => {
         const { id_client, items } = req.body;
         if (!id_client || !Array.isArray(items) || items.length === 0) {
-            return res.status(400).json({ error: 'id_client et items requis' });
+            return res.status(400).json({ error: 'id_client et items (non vide) requis' });
         }
 
-        const client = await pool.query('SELECT id_client FROM clients WHERE id_client = $1', [id_client]);
-        if (client.rows.length === 0) return res.status(400).json({ error: 'Client invalide' });
-
-        const clientConn = await pool.connect();
+        const clientPg = await pool.connect();
         try {
-            await clientConn.query('BEGIN');
+            await clientPg.query('BEGIN');
 
-            // create commande
-            const cRes = await clientConn.query(
-                'INSERT INTO commandes (id_client, total) VALUES ($1, 0) RETURNING *',
+            // Créer la commande (date_commande automatique, total temporaire 0)
+            const insertCmd = await clientPg.query(
+                `INSERT INTO commandes (id_client, date_commande, total)
+       VALUES ($1, NOW(), 0) RETURNING id_commande`,
                 [id_client]
             );
-            const id_commande = cRes.rows[0].id_commande;
+            const id_commande = insertCmd.rows[0].id_commande;
 
+            // Insérer les lignes et mettre à jour le stock, calculer le total
             let total = 0;
             for (const it of items) {
                 const { id_produit, quantite_produit } = it;
-                if (!id_produit || !quantite_produit || quantite_produit <= 0) {
-                    throw { status: 400, message: 'Item invalide' };
+                if (!id_produit || !Number.isInteger(quantite_produit) || quantite_produit <= 0) {
+                    throw new Error('Item invalide');
                 }
-                const pRes = await clientConn.query('SELECT prix, quantite_stock FROM produits WHERE id_produit = $1 FOR UPDATE', [id_produit]);
-                if (pRes.rows.length === 0) throw { status: 400, message: `Produit ${id_produit} introuvable` };
-                const produit = pRes.rows[0];
-                if (produit.quantite_stock < quantite_produit) throw { status: 400, message: `Stock insuffisant pour produit ${id_produit}` };
 
-                const prix_unitaire = produit.prix;
-                await clientConn.query(
-                    'INSERT INTO produit_commande (id_commande, id_produit, quantite_produit, prix_unitaire) VALUES ($1,$2,$3,$4)',
-                    [id_commande, id_produit, quantite_produit, prix_unitaire]
+                // Récupérer le prix et le stock du produit
+                const prodRes = await clientPg.query(
+                    `SELECT prix, quantite_stock FROM produits WHERE id_produit = $1 FOR UPDATE`,
+                    [id_produit]
                 );
-                await clientConn.query(
-                    'UPDATE produits SET quantite_stock = quantite_stock - $1 WHERE id_produit = $2',
+                if (prodRes.rowCount === 0) throw new Error(`Produit ${id_produit} introuvable`);
+                const { prix, quantite_stock } = prodRes.rows[0];
+
+                if (quantite_stock < quantite_produit) {
+                    throw new Error(`Stock insuffisant pour le produit ${id_produit}`);
+                }
+
+                // Insérer la ligne sans référencer prix_unitaire
+                await clientPg.query(
+                    `INSERT INTO produit_commande (id_commande, id_produit, quantite_produit)
+         VALUES ($1, $2, $3)`,
+                    [id_commande, id_produit, quantite_produit]
+                );
+
+                // Décrémenter le stock
+                await clientPg.query(
+                    `UPDATE produits SET quantite_stock = quantite_stock - $1 WHERE id_produit = $2`,
                     [quantite_produit, id_produit]
                 );
-                total += parseFloat(prix_unitaire) * parseInt(quantite_produit, 10);
+
+                total += parseFloat(prix) * quantite_produit;
             }
 
-            await clientConn.query('UPDATE commandes SET total = $1 WHERE id_commande = $2', [total.toFixed(2), id_commande]);
-            await clientConn.query('COMMIT');
+            // Mettre à jour le total de la commande
+            await clientPg.query(
+                `UPDATE commandes SET total = $1 WHERE id_commande = $2`,
+                [total, id_commande]
+            );
 
-            const created = await pool.query('SELECT * FROM commandes WHERE id_commande = $1', [id_commande]);
-            return res.status(201).json({ commande: created.rows[0] });
+            await clientPg.query('COMMIT');
+            return res.status(201).json({ id_commande, total });
         } catch (err) {
-            await clientConn.query('ROLLBACK');
+            await clientPg.query('ROLLBACK');
             console.error(err);
-            if (err && err.status) return res.status(err.status).json({ error: err.message });
-            return res.status(500).json({ error: 'Erreur serveur' });
+            return res.status(500).json({ error: err.message || 'Erreur serveur' });
         } finally {
-            clientConn.release();
+            clientPg.release();
         }
     });
 
