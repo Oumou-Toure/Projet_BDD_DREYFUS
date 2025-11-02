@@ -3,12 +3,12 @@
 SELECT p.id_produit,
        p.nom,
        SUM(pc.quantite_produit)                        AS total_qty,
-       SUM(pc.quantite_produit * pc.prix_unitaire)     AS total_revenue
+       SUM(pc.quantite_produit * COALESCE(p.prix, 0))  AS total_revenue
 FROM produit_commande pc
-JOIN produits p ON p.id_produit = pc.id_produit
+         JOIN produits p ON p.id_produit = pc.id_produit
 GROUP BY p.id_produit, p.nom
 ORDER BY total_revenue DESC
-LIMIT 20;
+    LIMIT 20
 
 
 

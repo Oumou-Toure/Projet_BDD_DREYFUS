@@ -27,7 +27,7 @@ if (!hasCollection('recette')) {
                         items: { bsonType: 'string' },
                         description: "Liste d'étapes"
                     },
-                    createdBy: { bsonType: 'string', description: 'Auteur de la recette' },
+                    createdBy: { bsonType: ['string', 'int', 'long'], description: 'Auteur de la recette (string ou entier)' },
                     createdAt: { bsonType: 'date', description: 'Date de création' }
                 }
             }
@@ -38,7 +38,7 @@ if (!hasCollection('recette')) {
     db.recette.createIndex({ productId: 1 }, { background: true });
 
     db.recette.insertOne({
-        productId: "42", // exemple : id Postgres stocké en string (ou remplacer par 42)
+        productId: 1,
         ingredients: ['farine', 'sucre', 'oeufs'],
         etapes: ['mélanger', 'cuire 30min'],
         createdBy: 'admin',

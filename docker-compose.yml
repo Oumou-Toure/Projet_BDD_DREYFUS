@@ -35,7 +35,7 @@ services:
       - PG_HOST=postgres
       - PG_PORT=5432
       - PG_DATABASE=sweetcake
-      - MONGO_URI=mongodb://mongo:27017/sweetcake
+      - MONGO_URI=mongodb://admin:password@localhost:27017/sweetcake?authSource=admin
     ports:
       - "3000:3000"
     depends_on:
